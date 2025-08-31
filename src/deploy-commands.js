@@ -24,10 +24,10 @@ const rest = new REST().setToken(token);
 	try {
 		console.log(`Started refreshing ${commands.length} application (/) commands.`);
 		const data = await rest.put(
-			// Routes.applicationCommands(clientId),
-			Routes.applicationGuildCommands(clientId, guildId),
+			Routes.applicationCommands(clientId),
+			// Routes.applicationGuildCommands(clientId, guildId),
 			{ body: commands },
-			// { body: []},
+			// { body: [] },
 		);
 
 		console.log(`Successfully reloaded ${data.length} application (/) commands.`);
