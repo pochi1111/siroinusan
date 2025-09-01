@@ -2,6 +2,8 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { JSONFile } = require('lowdb/node');
 const { Low } = require('lowdb');
 const got = require('got').default;
+const fs = require('node:fs');
+let lastRefleshProblems = new Date();
 
 const adapter = new JSONFile(require('path').join(__dirname, '../db.json'));
 const db = new Low(adapter, { users: [] });
@@ -66,6 +68,27 @@ module.exports = {
 			await interaction.reply({ content: '難易度の下限を上限より小さくして下さい。', flags: MessageFlags.Ephemeral });
 			return;
 		}
-		await interaction.reply('問題を表示します。');
+		await interaction.reply('処理中です...');
+		let problems;
+		if ((new Date() - lastRefleshProblems) > 24 * 60 * 60 * 1000) {
+			lastRefleshProblems = new Date();
+			const problemUrl = 'https://kenkoooo.com/atcoder/resources/problem-models.json';
+			try {
+				const response = await got(problemUrl);
+				problems = JSON.parse(response.body);
+				problems = problems.filter(problem => /^(abc|arc|agc)/.test(problem.id));
+				fs.writeFileSync(require('path').join(__dirname, '../problems.json'), JSON.stringify(problems, null, 2));
+				console.log(`Fetched ${problems.length} problems from API`);
+			} catch (error) {
+				await interaction.editReply(`問題データの取得中にエラーが発生しました。\n${error.message}`);
+				return;
+			}
+		} else {
+			problems = JSON.parse(fs.readFileSync(require('path').join(__dirname, '../problems.json')));
+		}
+		let filteredProblems = problems.filter(problem => {
+			const difficulty = problem.difficulty || 0;
+			return difficulty >= minDifficulty && difficulty <= maxDifficulty;
+		});
 	},
 };
