@@ -1,10 +1,12 @@
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
 const { JSONFile } = require('lowdb/node');
 const { Low } = require('lowdb');
 const got = require('got').default;
 const fs = require('node:fs');
-let lastRefleshProblems = new Date();
+let lastRefleshProblems = new Date(Date.now() - 25 * 60 * 60 * 1000);
 
+const defaultCount = 3;
+const diffDifficulty = 400;
 const adapter = new JSONFile(require('path').join(__dirname, '../db.json'));
 const db = new Low(adapter, { users: [] });
 
@@ -34,8 +36,13 @@ module.exports = {
 				.setRequired(false),
 		)
 		.addBooleanOption(option =>
+			option.setName('is_experimental')
+				.setDescription('実験的な問題を含めるかどうか')
+				.setRequired(false),
+		)
+		.addBooleanOption(option =>
 			option.setName('is_solved')
-				.setDescription('解いた問題を含めるかどうか')
+				.setDescription('解いた問題を含めるかどうか(WIP)')
 				.setRequired(false),
 		),
 	async execute(interaction) {
@@ -60,25 +67,33 @@ module.exports = {
 		}
 		const Ratings = userHistory.map(entry => entry.NewRating);
 		const latestRating = Ratings[Ratings.length - 1];
-		const count = interaction.options.getInteger('count') || 1;
-		const minDifficulty = interaction.options.getInteger('min_difficulty') || latestRating - 200;
-		const maxDifficulty = interaction.options.getInteger('max_difficulty') || latestRating + 200;
-		const isSolved = interaction.options.getBoolean('is_solved') || false;
+		const minDifficulty = interaction.options.getInteger('min_difficulty') || latestRating - (diffDifficulty / 4);
+		const maxDifficulty = interaction.options.getInteger('max_difficulty') || latestRating + diffDifficulty;
+		// const isSolved = interaction.options.getBoolean('is_solved') || false;
 		if (minDifficulty > maxDifficulty) {
 			await interaction.reply({ content: '難易度の下限を上限より小さくして下さい。', flags: MessageFlags.Ephemeral });
 			return;
 		}
 		await interaction.reply('処理中です...');
 		let problems;
-		if ((new Date() - lastRefleshProblems) > 24 * 60 * 60 * 1000) {
+		if ((new Date() - lastRefleshProblems) > 24 * 60 * 60 * 1000 || !fs.existsSync(require('path').join(__dirname, '../problems.json'))) {
 			lastRefleshProblems = new Date();
 			const problemUrl = 'https://kenkoooo.com/atcoder/resources/problem-models.json';
 			try {
 				const response = await got(problemUrl);
 				problems = JSON.parse(response.body);
-				problems = problems.filter(problem => /^(abc|arc|agc)/.test(problem.id));
-				fs.writeFileSync(require('path').join(__dirname, '../problems.json'), JSON.stringify(problems, null, 2));
-				console.log(`Fetched ${problems.length} problems from API`);
+				const filteredProblems = JSON.parse('[]');
+				for (const problem in problems) {
+					if (problem.startsWith('abc') || problem.startsWith('arc') || problem.startsWith('agc')) {
+						if (problems[problem].difficulty < 0) {
+							problems[problem].difficulty = 0;
+						}
+						filteredProblems.push({ id: problem, difficulty: problems[problem].difficulty, is_experimental: problems[problem].is_experimental });
+					}
+				}
+				problems = filteredProblems;
+				fs.writeFileSync(require('path').join(__dirname, '../problems.json'), JSON.stringify(filteredProblems, null, 2));
+				console.log(`Fetched ${filteredProblems.length} problems from API`);
 			} catch (error) {
 				await interaction.editReply(`問題データの取得中にエラーが発生しました。\n${error.message}`);
 				return;
@@ -86,9 +101,31 @@ module.exports = {
 		} else {
 			problems = JSON.parse(fs.readFileSync(require('path').join(__dirname, '../problems.json')));
 		}
-		let filteredProblems = problems.filter(problem => {
-			const difficulty = problem.difficulty || 0;
-			return difficulty >= minDifficulty && difficulty <= maxDifficulty;
-		});
+		const isExperimental = interaction.options.getBoolean('is_experimental') || true;
+		const filteredProblems = [];
+		for (const problem of problems) {
+			if (problem.difficulty >= minDifficulty && problem.difficulty <= maxDifficulty) {
+				if (isExperimental || !problem.is_experimental) {
+					filteredProblems.push(problem);
+				}
+			}
+		}
+		const problemCount = filteredProblems.length;
+		const count = Math.min(interaction.options.getInteger('count') || defaultCount, problemCount);
+		const selectedProblems = [];
+		for (let i = 0; i < count; i++) {
+			const randomIndex = Math.floor(Math.random() * filteredProblems.length);
+			selectedProblems.push(filteredProblems[randomIndex]);
+			filteredProblems.splice(randomIndex, 1);
+		}
+		const replyEmbed = new EmbedBuilder()
+			.setColor('#0099ff')
+			.setTitle('AtCoder')
+			.setDescription(
+				selectedProblems
+					.map(problem => `[${problem.id}](https://atcoder.jp/contests/${problem.id.slice(0, 6)}/tasks/${problem.id}) 	diff: ${problem.difficulty}`)
+					.join('\n'),
+			);
+		await interaction.editReply({ embeds: [replyEmbed], content: '' });
 	},
 };
